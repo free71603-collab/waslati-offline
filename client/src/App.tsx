@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 
 
+/** «دفتر الحساب الهادئ»: إطار عربي فاتح يركز على حالة الوصل قبل أي زخرفة. */
 function Router() {
   return (
     <Switch>

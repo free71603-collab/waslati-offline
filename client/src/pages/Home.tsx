@@ -12,6 +12,7 @@ import {
   CircleCheck,
   CloudOff,
   Download,
+  FolderOpen,
   FilePlus2,
   FileText,
   Home as HomeIcon,
@@ -27,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { toast } from "sonner";
 import {
   createBackup,
@@ -56,9 +58,16 @@ import {
 
 type Filter = "all" | "open" | "paid" | "overpaid";
 type Tab = "home" | "ledger" | "privacy";
+type BackupSaverPlugin = { saveBackup(options: { fileName: string; content: string }): Promise<void> };
+type SavePickerWindow = Window & {
+  showSaveFilePicker?: (options: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) => Promise<{
+    createWritable: () => Promise<{ write: (content: string) => Promise<void>; close: () => Promise<void> }>;
+  }>;
+};
 
 const LOGO_IMAGE = "/logo.svg";
 const TODAY = () => new Date().toISOString().slice(0, 10);
+const BackupSaver = registerPlugin<BackupSaverPlugin>("BackupSaver");
 
 const CURRENCIES: { value: CurrencyCode; label: string }[] = [
   { value: "IQD", label: "دينار عراقي (د.ع)" },
@@ -168,6 +177,7 @@ export default function Home() {
   const [paymentForm, setPaymentForm] = useState({ amount: "", paidAt: TODAY(), method: "نقداً", note: "" });
   const importInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const filePhotoInputRef = useRef<HTMLInputElement>(null);
   const [photoPreview, setPhotoPreview] = useState("");
 
   const reloadReceipts = async () => {
@@ -365,14 +375,34 @@ export default function Home() {
   const handleExport = async () => {
     try {
       const backup = await createBackup();
-      const payload = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const content = JSON.stringify(backup, null, 2);
+      const fileName = `waslati-backup-${TODAY()}.json`;
+      if (Capacitor.isNativePlatform()) {
+        await BackupSaver.saveBackup({ fileName, content });
+        toast.success("اخترت مكان حفظ النسخة الاحتياطية على جهازك.");
+        return;
+      }
+      const savePicker = (window as SavePickerWindow).showSaveFilePicker;
+      if (savePicker) {
+        const handle = await savePicker({
+          suggestedName: fileName,
+          types: [{ description: "نسخة احتياطية لوصلاتي", accept: { "application/json": [".json"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(content);
+        await writable.close();
+        toast.success("تم حفظ النسخة الاحتياطية في المكان الذي اخترته.");
+        return;
+      }
+      const payload = new Blob([content], { type: "application/json" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(payload);
-      link.download = `waslati-backup-${TODAY()}.json`;
+      link.download = fileName;
       link.click();
       URL.revokeObjectURL(link.href);
-      toast.success("تم تنزيل نسخة احتياطية من بياناتك.");
-    } catch {
+      toast.success("تم تنزيل النسخة الاحتياطية. اختر مكانها من تنزيلات المتصفح.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       toast.error("تعذر إنشاء النسخة الاحتياطية.");
     }
   };
@@ -568,9 +598,14 @@ export default function Home() {
           </DrawerHeader>
           <form className="form-grid" onSubmit={(event) => void handleCreateReceipt(event)}>
             <input ref={photoInputRef} onChange={(event) => void handlePhotoChange(event)} type="file" accept="image/*" capture="environment" hidden />
-            <button className={`photo-capture ${photoPreview ? "has-photo" : ""}`} type="button" onClick={() => photoInputRef.current?.click()}>
-              {photoPreview ? <img src={photoPreview} alt="معاينة صورة الوصل" /> : <span className="photo-placeholder"><Camera size={27} /><strong>التقط صورة للوصل</strong><small>أو اخترها من معرض الهاتف</small></span>}
-            </button>
+            <input ref={filePhotoInputRef} onChange={(event) => void handlePhotoChange(event)} type="file" accept="image/*" hidden />
+            <div className="photo-source-actions">
+              <button className="photo-source-button" type="button" onClick={() => photoInputRef.current?.click()}><Camera size={18} /> التقاط بالكاميرا</button>
+              <button className="photo-source-button" type="button" onClick={() => filePhotoInputRef.current?.click()}><FolderOpen size={18} /> اختيار من الملفات</button>
+            </div>
+            <div className={`photo-capture ${photoPreview ? "has-photo" : ""}`}>
+              {photoPreview ? <img src={photoPreview} alt="معاينة صورة الوصل" /> : <span className="photo-placeholder"><Camera size={27} /><strong>أضف صورة للوصل</strong><small>صوّرها الآن أو اخترها من تطبيق الملفات</small></span>}
+            </div>
             {photoPreview && <button className="clear-photo" type="button" onClick={() => setPhotoPreview("")}><X size={14} /> إزالة الصورة</button>}
             <div className="form-two">
               <label className="field-group"><span className="field-label">إجمالي المبلغ</span><input className="field-control" type="number" min="0" step="any" required inputMode="decimal" value={receiptForm.total} onChange={(event) => setReceiptForm({ ...receiptForm, total: event.target.value })} placeholder="0" /></label>

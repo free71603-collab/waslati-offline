@@ -21,6 +21,8 @@ export type Receipt = {
   issuedAt: string;
   dueDate?: string;
   note?: string;
+  /** صورة مضغوطة بصيغة data URL، محفوظة داخل IndexedDB على نفس الجهاز فقط. */
+  photoData?: string;
   payments: Payment[];
   createdAt: string;
   updatedAt: string;

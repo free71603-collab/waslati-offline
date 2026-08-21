@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">وصلاتي</string>
+    <string name="title_activity_main">وصلاتي</string>
+    <string name="package_name">com.waslati.offline</string>
+    <string name="custom_url_scheme">com.waslati.offline</string>
+</resources>

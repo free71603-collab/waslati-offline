@@ -4,6 +4,7 @@
  */
 import {
   ArchiveRestore,
+  Camera,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -21,7 +22,6 @@ import {
   Search,
   ShieldCheck,
   Trash2,
-  Upload,
   WalletCards,
   WifiOff,
   X,
@@ -51,10 +51,7 @@ import {
 type Filter = "all" | "open" | "paid" | "overpaid";
 type Tab = "home" | "ledger" | "privacy";
 
-const HERO_IMAGE = "/manus-storage/waslati-ledger-hero_86352e83.jpg";
-const EMPTY_IMAGE = "/manus-storage/waslati-empty-state_39c54553.jpg";
-const PRIVACY_IMAGE = "/manus-storage/waslati-privacy-local_4f30bc97.jpg";
-const LOGO_IMAGE = "/manus-storage/waslati-logo_917cba04.png";
+const LOGO_IMAGE = "/logo.svg";
 const TODAY = () => new Date().toISOString().slice(0, 10);
 
 const CURRENCIES: { value: CurrencyCode; label: string }[] = [
@@ -118,6 +115,31 @@ function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+/** تصغير الصورة قبل الحفظ، حتى يظل النسخ الاحتياطي محلياً وخفيفاً نسبياً. */
+async function compressReceiptPhoto(file: File): Promise<string> {
+  const source = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("تعذر قراءة الصورة."));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("تعذر تجهيز الصورة."));
+    element.src = source;
+  });
+  const longestSide = Math.max(image.naturalWidth, image.naturalHeight);
+  const scale = Math.min(1, 1440 / longestSide);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("تعذر ضغط الصورة.");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.78);
+}
+
 export default function Home() {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,15 +154,14 @@ export default function Home() {
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [receiptForm, setReceiptForm] = useState({
     title: "",
-    merchant: "",
     total: "",
     currency: "IQD" as CurrencyCode,
     issuedAt: TODAY(),
-    dueDate: "",
-    note: "",
   });
   const [paymentForm, setPaymentForm] = useState({ amount: "", paidAt: TODAY(), method: "نقداً", note: "" });
   const importInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [photoPreview, setPhotoPreview] = useState("");
 
   const reloadReceipts = async () => {
     try {
@@ -190,27 +211,43 @@ export default function Home() {
   }, [filter, query, receipts]);
 
   const openReceiptDrawer = () => {
-    setReceiptForm({ title: "", merchant: "", total: "", currency: "IQD", issuedAt: TODAY(), dueDate: "", note: "" });
+    setReceiptForm({ title: "", total: "", currency: "IQD", issuedAt: TODAY() });
+    setPhotoPreview("");
     setReceiptDrawerOpen(true);
+  };
+
+  const handlePhotoChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("اختر صورة للوصل فقط.");
+      return;
+    }
+    try {
+      setPhotoPreview(await compressReceiptPhoto(file));
+      toast.success("حُفظت الصورة محلياً وستُربط بالوصل.");
+    } catch {
+      toast.error("تعذر تجهيز الصورة. جرّب صورة أخرى.");
+    }
   };
 
   const handleCreateReceipt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const total = Number(receiptForm.total);
-    if (!receiptForm.title.trim() || !receiptForm.merchant.trim() || !Number.isFinite(total) || total <= 0) {
-      toast.error("أدخل اسم الوصل والجهة والمبلغ الصحيح.");
+    if (!Number.isFinite(total) || total <= 0) {
+      toast.error("أدخل مقدار الوصل الصحيح.");
       return;
     }
     const now = new Date().toISOString();
     const receipt: Receipt = {
       id: makeId("receipt"),
-      title: receiptForm.title.trim(),
-      merchant: receiptForm.merchant.trim(),
+      title: receiptForm.title.trim() || "وصل مصوّر",
+      merchant: "غير محدد",
       total,
       currency: receiptForm.currency,
       issuedAt: receiptForm.issuedAt,
-      dueDate: receiptForm.dueDate || undefined,
-      note: receiptForm.note.trim() || undefined,
+      photoData: photoPreview || undefined,
       payments: [],
       createdAt: now,
       updatedAt: now,
@@ -234,6 +271,28 @@ export default function Home() {
     if (!selectedReceipt) return;
     setPaymentForm({ amount: Math.max(balance(selectedReceipt), 0).toString(), paidAt: TODAY(), method: "نقداً", note: "" });
     setPaymentDrawerOpen(true);
+  };
+
+  const handleSettleReceipt = async () => {
+    if (!selectedReceipt) return;
+    const remaining = balance(selectedReceipt);
+    if (remaining <= 0.005) {
+      toast.info(remaining < -0.005 ? "هذا الوصل مدفوع بزيادة بالفعل." : "هذا الوصل مكتمل الدفع بالفعل.");
+      return;
+    }
+    const updatedReceipt: Receipt = {
+      ...selectedReceipt,
+      payments: [...selectedReceipt.payments, { id: makeId("payment"), amount: remaining, paidAt: TODAY(), method: "إتمام سريع" }],
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await saveReceipt(updatedReceipt);
+      setSelectedReceipt(updatedReceipt);
+      await reloadReceipts();
+      toast.success("تم إتمام دفع الوصل وحُفظت العملية محلياً.");
+    } catch {
+      toast.error("تعذر إتمام الدفع محلياً.");
+    }
   };
 
   const handleCreatePayment = async (event: FormEvent<HTMLFormElement>) => {
@@ -391,7 +450,7 @@ export default function Home() {
                 <span className="protect-item"><Check size={15} /> محفوظ في قاعدة بيانات محلية</span>
                 <span className="protect-item"><Check size={15} /> يعمل بعد التثبيت دون إنترنت</span>
               </div>
-              <img src={PRIVACY_IMAGE} alt="دفتر وصولات محلي محفوظ بأمان" />
+              <div className="local-archive-art" aria-hidden="true"><ShieldCheck size={42} /><ReceiptText size={52} /></div>
             </div>
             <span className="protect-status"><CloudOff size={14} /> {storagePersistent === true ? "طُلب تخزين دائم للبيانات" : "التخزين المحلي مفعّل"}</span>
             <div className="backup-actions">
@@ -440,9 +499,9 @@ export default function Home() {
                   const current = balance(receipt);
                   return (
                     <button type="button" className="receipt-item" key={receipt.id} onClick={() => openDetails(receipt)}>
-                      <span className={`receipt-stamp stamp-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>
+                      {receipt.photoData ? <img className="receipt-thumb" src={receipt.photoData} alt={`صورة ${receipt.title}`} /> : <span className={`receipt-stamp stamp-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>
                         {state === "paid" ? <Check size={17} /> : state === "overpaid" ? <Plus size={16} /> : <CalendarDays size={16} />}
-                      </span>
+                      </span>}
                       <span>
                         <span className="receipt-title">{receipt.title}</span>
                         <span className="receipt-meta">{receipt.merchant} · {formatDate(receipt.issuedAt)}</span>
@@ -457,7 +516,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="empty-state">
-                <img src={EMPTY_IMAGE} alt="وصولات ورقية فارغة" />
+                <div className="empty-receipt-mark" aria-hidden="true"><Camera size={38} /><ReceiptText size={45} /></div>
                 <h3 className="empty-title">{query || filter !== "all" ? "لا توجد نتائج بهذه التصفية" : "ابدأ بأول وصل"}</h3>
                 <p className="empty-copy">{query || filter !== "all" ? "جرّب تغيير كلمات البحث أو أظهر كل حالات الوصولات." : "أدخل قيمة الوصل، ثم أضف كل دفعة لاحقاً. سنوضح لك المتبقي أو الزيادة تلقائياً."}</p>
                 {!query && filter === "all" && <button type="button" className="primary-action" onClick={openReceiptDrawer}><FilePlus2 size={16} /> إضافة وصل</button>}
@@ -477,24 +536,24 @@ export default function Home() {
         <DrawerContent className="drawer-panel" aria-describedby="new-receipt-description">
           <DrawerHeader className="drawer-heading">
             <div>
-              <DrawerTitle className="drawer-title">إضافة وصل جديد</DrawerTitle>
-              <DrawerDescription className="drawer-description" id="new-receipt-description">السجل محفوظ محلياً؛ أضف الدفعات لاحقاً من تفاصيل الوصل.</DrawerDescription>
+              <DrawerTitle className="drawer-title">صوّر الوصل وأدخل المبلغ</DrawerTitle>
+              <DrawerDescription className="drawer-description" id="new-receipt-description">تُحفظ الصورة والمبلغ داخل هذا الجهاز فقط، ولا تحتاج إلى كتابة تفاصيل طويلة.</DrawerDescription>
             </div>
             <button className="icon-button" type="button" onClick={() => setReceiptDrawerOpen(false)} aria-label="إغلاق"><X size={18} /></button>
           </DrawerHeader>
           <form className="form-grid" onSubmit={(event) => void handleCreateReceipt(event)}>
-            <label className="field-group"><span className="field-label">اسم الوصل أو الفاتورة</span><input className="field-control" required value={receiptForm.title} onChange={(event) => setReceiptForm({ ...receiptForm, title: event.target.value })} placeholder="مثال: مواد مشروع النجارة" /></label>
-            <label className="field-group"><span className="field-label">الجهة أو المورد</span><input className="field-control" required value={receiptForm.merchant} onChange={(event) => setReceiptForm({ ...receiptForm, merchant: event.target.value })} placeholder="اسم المتجر أو الشخص" /></label>
+            <input ref={photoInputRef} onChange={(event) => void handlePhotoChange(event)} type="file" accept="image/*" capture="environment" hidden />
+            <button className={`photo-capture ${photoPreview ? "has-photo" : ""}`} type="button" onClick={() => photoInputRef.current?.click()}>
+              {photoPreview ? <img src={photoPreview} alt="معاينة صورة الوصل" /> : <span className="photo-placeholder"><Camera size={27} /><strong>التقط صورة للوصل</strong><small>أو اخترها من معرض الهاتف</small></span>}
+            </button>
+            {photoPreview && <button className="clear-photo" type="button" onClick={() => setPhotoPreview("")}><X size={14} /> إزالة الصورة</button>}
             <div className="form-two">
               <label className="field-group"><span className="field-label">إجمالي المبلغ</span><input className="field-control" type="number" min="0" step="any" required inputMode="decimal" value={receiptForm.total} onChange={(event) => setReceiptForm({ ...receiptForm, total: event.target.value })} placeholder="0" /></label>
               <label className="field-group"><span className="field-label">العملة</span><select className="field-control" value={receiptForm.currency} onChange={(event) => setReceiptForm({ ...receiptForm, currency: event.target.value as CurrencyCode })}>{CURRENCIES.map((currency) => <option value={currency.value} key={currency.value}>{currency.label}</option>)}</select></label>
             </div>
-            <div className="form-two">
-              <label className="field-group"><span className="field-label">تاريخ الوصل</span><input className="field-control" type="date" required value={receiptForm.issuedAt} onChange={(event) => setReceiptForm({ ...receiptForm, issuedAt: event.target.value })} /></label>
-              <label className="field-group"><span className="field-label">تاريخ الاستحقاق</span><input className="field-control" type="date" value={receiptForm.dueDate} onChange={(event) => setReceiptForm({ ...receiptForm, dueDate: event.target.value })} /></label>
-            </div>
-            <label className="field-group"><span className="field-label">ملاحظة (اختياري)</span><textarea className="field-control" value={receiptForm.note} onChange={(event) => setReceiptForm({ ...receiptForm, note: event.target.value })} placeholder="أي تفاصيل تساعدك على تذكّر هذا الوصل" /></label>
-            <div className="form-footer"><button type="button" className="soft-action" onClick={() => setReceiptDrawerOpen(false)}>إلغاء</button><button className="primary-action" type="submit"><FilePlus2 size={16} /> حفظ الوصل</button></div>
+            <label className="field-group"><span className="field-label">عنوان قصير (اختياري)</span><input className="field-control" value={receiptForm.title} onChange={(event) => setReceiptForm({ ...receiptForm, title: event.target.value })} placeholder="مثال: مواد الورشة" /></label>
+            <input type="hidden" value={receiptForm.issuedAt} />
+            <div className="form-footer"><button type="button" className="soft-action" onClick={() => setReceiptDrawerOpen(false)}>إلغاء</button><button className="primary-action" type="submit"><Check size={16} /> حفظ الوصل</button></div>
           </form>
         </DrawerContent>
       </Drawer>
@@ -510,6 +569,7 @@ export default function Home() {
                 </div>
                 <button className="icon-button" type="button" onClick={() => setDetailDrawerOpen(false)} aria-label="إغلاق"><X size={18} /></button>
               </DrawerHeader>
+              {selectedReceipt.photoData && <img className="detail-receipt-photo" src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title}`} />}
               <div className="detail-total">
                 <div><span>{currentState === "paid" ? "إجمالي الوصل" : currentState === "overpaid" ? "المبلغ المدفوع بزيادة" : "المتبقي للدفع"}</span><strong>{formatMoney(currentState === "paid" ? selectedReceipt.total : Math.abs(currentBalance), selectedReceipt.currency)}</strong></div>
                 <span className="detail-state">{statusCopy(currentState)}</span>
@@ -520,7 +580,7 @@ export default function Home() {
               {selectedReceipt.note && <div className="detail-row"><span>ملاحظتك</span><strong>{selectedReceipt.note}</strong></div>}
               <h3 className="payments-title">سجل الدفعات ({selectedReceipt.payments.length})</h3>
               {selectedReceipt.payments.length ? selectedReceipt.payments.slice().reverse().map((payment) => <div className="payment-row" key={payment.id}><span><strong>{formatMoney(payment.amount, selectedReceipt.currency)}</strong><p>{payment.method} · {formatDate(payment.paidAt)}{payment.note ? ` · ${payment.note}` : ""}</p></span><Check size={17} color="oklch(0.42 0.1 159)" /></div>) : <p className="section-caption">لم تُسجّل أي دفعة لهذا الوصل بعد.</p>}
-              <div className="form-footer"><button className="soft-action" type="button" onClick={openPaymentDrawer}><WalletCards size={16} /> تسجيل دفعة</button><button className="primary-action" type="button" onClick={() => { setDetailDrawerOpen(false); setReceiptDrawerOpen(true); }}><FileText size={16} /> وصل جديد</button></div>
+              <div className="form-footer"><button className="soft-action" type="button" onClick={openPaymentDrawer}><WalletCards size={16} /> دفعة جزئية</button><button className="primary-action" type="button" onClick={() => void handleSettleReceipt()}><Check size={16} /> إتمام الدفع</button></div>
               <button className="danger-button" type="button" onClick={() => void handleDeleteReceipt()}><Trash2 size={15} className="inline ml-1" /> حذف هذا الوصل</button>
             </>
           )}

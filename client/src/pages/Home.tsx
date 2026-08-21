@@ -47,6 +47,12 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Filter = "all" | "open" | "paid" | "overpaid";
 type Tab = "home" | "ledger" | "privacy";
@@ -151,6 +157,7 @@ export default function Home() {
   const [receiptDrawerOpen, setReceiptDrawerOpen] = useState(false);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [paymentDrawerOpen, setPaymentDrawerOpen] = useState(false);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [receiptForm, setReceiptForm] = useState({
     title: "",
@@ -587,7 +594,7 @@ export default function Home() {
                 </div>
                 <button className="icon-button" type="button" onClick={() => setDetailDrawerOpen(false)} aria-label="إغلاق"><X size={18} /></button>
               </DrawerHeader>
-              {selectedReceipt.photoData && <div className="detail-receipt-frame"><img className="detail-receipt-photo" src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title}`} /></div>}
+              {selectedReceipt.photoData && <button className="detail-receipt-frame" type="button" onClick={() => setImageViewerOpen(true)} aria-label={`فتح صورة ${selectedReceipt.title} كاملة`}><img className="detail-receipt-photo" src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title}`} /><span className="photo-expand-hint">اضغط لعرض الصورة كاملة</span></button>}
               <div className="detail-total">
                 <div><span>{currentState === "paid" ? "إجمالي الوصل" : currentState === "overpaid" ? "المبلغ المدفوع بزيادة" : "المتبقي للدفع"}</span><strong>{formatMoney(currentState === "paid" ? selectedReceipt.total : Math.abs(currentBalance), selectedReceipt.currency)}</strong></div>
                 <span className="detail-state">{statusCopy(currentState)}</span>
@@ -620,6 +627,18 @@ export default function Home() {
           )}
         </DrawerContent>
       </Drawer>
+
+      <Dialog open={imageViewerOpen} onOpenChange={setImageViewerOpen}>
+        <DialogContent className="image-viewer-dialog" showCloseButton={false}>
+          <div className="image-viewer-header">
+            <div><DialogTitle className="image-viewer-title">صورة الوصل كاملة</DialogTitle><DialogDescription className="image-viewer-description">{selectedReceipt?.title ?? "وصل"}</DialogDescription></div>
+            <button className="image-viewer-close" type="button" onClick={() => setImageViewerOpen(false)} aria-label="إغلاق عرض الصورة"><X size={21} /></button>
+          </div>
+          <div className="image-viewer-stage">
+            {selectedReceipt?.photoData && <img src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title} كاملة`} />}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

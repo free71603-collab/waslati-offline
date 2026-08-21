@@ -340,6 +340,21 @@ export default function Home() {
     }
   };
 
+  const handleQuickDeletePaidReceipt = async (receipt: Receipt) => {
+    if (!window.confirm(`سيُحذف الوصل المُسوّى «${receipt.title}» وكل سجل دفعاته من هذا الجهاز. هل تريد المتابعة؟`)) return;
+    try {
+      await removeReceipt(receipt.id);
+      if (selectedReceipt?.id === receipt.id) {
+        setDetailDrawerOpen(false);
+        setSelectedReceipt(null);
+      }
+      await reloadReceipts();
+      toast.success("حُذف الوصل المُسوّى من السجل المحلي.");
+    } catch {
+      toast.error("تعذر حذف الوصل المُسوّى.");
+    }
+  };
+
   const handleExport = async () => {
     try {
       const backup = await createBackup();
@@ -498,19 +513,22 @@ export default function Home() {
                   const state = receiptState(receipt);
                   const current = balance(receipt);
                   return (
-                    <button type="button" className="receipt-item" key={receipt.id} onClick={() => openDetails(receipt)}>
-                      {receipt.photoData ? <img className="receipt-thumb" src={receipt.photoData} alt={`صورة ${receipt.title}`} /> : <span className={`receipt-stamp stamp-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>
-                        {state === "paid" ? <Check size={17} /> : state === "overpaid" ? <Plus size={16} /> : <CalendarDays size={16} />}
-                      </span>}
-                      <span>
-                        <span className="receipt-title">{receipt.title}</span>
-                        <span className="receipt-meta">{receipt.merchant} · {formatDate(receipt.issuedAt)}</span>
-                      </span>
-                      <span>
-                        <span className="receipt-amount">{formatMoney(state === "overpaid" ? -current : state === "paid" ? receipt.total : current, receipt.currency)}</span>
-                        <span className={`receipt-state state-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>{statusCopy(state)}</span>
-                      </span>
-                    </button>
+                    <div className="receipt-list-row" key={receipt.id}>
+                      <button type="button" className="receipt-item" onClick={() => openDetails(receipt)}>
+                        {receipt.photoData ? <img className="receipt-thumb" src={receipt.photoData} alt={`صورة ${receipt.title}`} /> : <span className={`receipt-stamp stamp-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>
+                          {state === "paid" ? <Check size={17} /> : state === "overpaid" ? <Plus size={16} /> : <CalendarDays size={16} />}
+                        </span>}
+                        <span>
+                          <span className="receipt-title">{receipt.title}</span>
+                          <span className="receipt-meta">{receipt.merchant} · {formatDate(receipt.issuedAt)}</span>
+                        </span>
+                        <span>
+                          <span className="receipt-amount">{formatMoney(state === "overpaid" ? -current : state === "paid" ? receipt.total : current, receipt.currency)}</span>
+                          <span className={`receipt-state state-${state === "open" ? "open" : state === "paid" ? "paid" : "over"}`}>{statusCopy(state)}</span>
+                        </span>
+                      </button>
+                      {state === "paid" && <button type="button" className="receipt-delete-quick" onClick={() => void handleQuickDeletePaidReceipt(receipt)} aria-label={`حذف الوصل المُسوّى ${receipt.title}`} title="حذف الوصل المُسوّى"><Trash2 size={17} /></button>}
+                    </div>
                   );
                 })}
               </div>
@@ -569,7 +587,7 @@ export default function Home() {
                 </div>
                 <button className="icon-button" type="button" onClick={() => setDetailDrawerOpen(false)} aria-label="إغلاق"><X size={18} /></button>
               </DrawerHeader>
-              {selectedReceipt.photoData && <img className="detail-receipt-photo" src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title}`} />}
+              {selectedReceipt.photoData && <div className="detail-receipt-frame"><img className="detail-receipt-photo" src={selectedReceipt.photoData} alt={`صورة ${selectedReceipt.title}`} /></div>}
               <div className="detail-total">
                 <div><span>{currentState === "paid" ? "إجمالي الوصل" : currentState === "overpaid" ? "المبلغ المدفوع بزيادة" : "المتبقي للدفع"}</span><strong>{formatMoney(currentState === "paid" ? selectedReceipt.total : Math.abs(currentBalance), selectedReceipt.currency)}</strong></div>
                 <span className="detail-state">{statusCopy(currentState)}</span>
@@ -592,7 +610,7 @@ export default function Home() {
           {selectedReceipt && (
             <>
               <DrawerHeader className="drawer-heading"><div><DrawerTitle className="drawer-title">تسجيل دفعة</DrawerTitle><DrawerDescription className="drawer-description">للوصل: {selectedReceipt.title}</DrawerDescription></div><button className="icon-button" type="button" onClick={() => setPaymentDrawerOpen(false)} aria-label="إغلاق"><X size={18} /></button></DrawerHeader>
-              <form className="form-grid" onSubmit={(event) => void handleCreatePayment(event)}>
+              <form className="form-grid payment-form" onSubmit={(event) => void handleCreatePayment(event)}>
                 <label className="field-group"><span className="field-label">مبلغ الدفعة ({CURRENCIES.find((currency) => currency.value === selectedReceipt.currency)?.label})</span><input className="field-control" type="number" step="any" min="0" required inputMode="decimal" value={paymentForm.amount} onChange={(event) => setPaymentForm({ ...paymentForm, amount: event.target.value })} /></label>
                 <div className="form-two"><label className="field-group"><span className="field-label">تاريخ الدفع</span><input className="field-control" type="date" required value={paymentForm.paidAt} onChange={(event) => setPaymentForm({ ...paymentForm, paidAt: event.target.value })} /></label><label className="field-group"><span className="field-label">طريقة الدفع</span><select className="field-control" value={paymentForm.method} onChange={(event) => setPaymentForm({ ...paymentForm, method: event.target.value })}><option>نقداً</option><option>تحويل</option><option>بطاقة</option><option>أخرى</option></select></label></div>
                 <label className="field-group"><span className="field-label">ملاحظة (اختياري)</span><input className="field-control" value={paymentForm.note} onChange={(event) => setPaymentForm({ ...paymentForm, note: event.target.value })} placeholder="رقم التحويل أو أي تذكير" /></label>
